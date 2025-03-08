@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FPV Drone Parts & Project Management</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css">
+  <!-- Library untuk QR Code & scan QR -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcodejs/qrcode.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jsqr/1.4.0/jsQR.min.js"></script>
+  <style>
+    .serial-box { border: 2px solid #ccc; padding: 20px; margin: 20px 0; border-radius: 10px; }
+    .valid { color: green; }
+    .invalid { color: red; }
+    .nav-tabs { margin-bottom: 20px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <div class="container mt-5">
+    <h1>FPV Drone Parts & Project Management</h1>
+    <!-- Navigation Tabs -->
+    <ul class="nav nav-tabs">
+      <li class="nav-item"><a class="nav-link active" href="#check">Check Serial</a></li>
+      <li class="nav-item"><a class="nav-link" href="#register">Register Unit</a></li>
+      <li class="nav-item"><a class="nav-link" href="#projects">Projects</a></li>
+      <li class="nav-item"><a class="nav-link" href="#log">Log History</a></li>
+      <li class="nav-item"><a class="nav-link" href="#backup">Backup & Restore</a></li>
+    </ul>
+
+    <!-- Check Serial Section -->
+    <div id="check" class="tab-content">
+      <h3>Check Serial Number</h3>
+      <input type="text" id="serialInput" class="form-control mb-2" placeholder="Enter serial number...">
+      <button class="btn btn-primary" onclick="checkSerial()">Check</button>
+      <div id="result" class="serial-box hidden">
+        <h4>Result:</h4>
+        <p id="statusText"></p>
+        <div id="serialDetails"></div>
+      </div>
+      <button class="btn btn-secondary mt-2" onclick="openScanner()">📷 Scan QR</button>
+      <video id="scanner" width="300" height="200" class="hidden"></video>
+    </div>
+
+    <!-- Register Unit Section -->
+    <div id="register" class="tab-content hidden">
+      <h3>Register New Unit</h3>
+      <form id="registrationForm">
+        <input type="text" class="form-control mb-2" id="partName" placeholder="Part Name" required>
+        <select class="form-control mb-2" id="category">
+          <option value="FC">Flight Controller</option>
+          <option value="Motor">Motor</option>
+          <option value="ESC">ESC</option>
+          <option value="Battery">Battery</option>
+        </select>
+        <!-- Tambahkan select untuk memilih proyek -->
+        <select class="form-control mb-2" id="projectSelect">
+          <option value="">Select Project (Optional)</option>
+        </select>
+        <div class="input-group mb-2">
+          <input type="text" class="form-control" id="newSerial" placeholder="Serial Number" required>
+          <button class="btn btn-warning" type="button" onclick="generateSerial()">Generate</button>
+        </div>
+        <input type="date" class="form-control mb-2" id="prodDate" required>
+        <button type="submit" class="btn btn-success">Register</button>
+      </form>
+      <div id="qrcode" class="mt-3"></div>
+    </div>
+
+    <!-- Projects Section -->
+    <div id="projects" class="tab-content hidden">
+      <h3>Projects</h3>
+      <form id="projectForm" class="mb-3">
+        <input type="text" class="form-control mb-2" id="projectName" placeholder="Project Name" required>
+        <textarea class="form-control mb-2" id="projectDesc" placeholder="Project Description (Optional)"></textarea>
+        <button type="submit" class="btn btn-primary">Add Project</button>
+      </form>
+      <ul id="projectList" class="list-group"></ul>
+    </div>
+
+    <!-- Log History Section -->
+    <div id="log" class="tab-content hidden">
+      <h3>Log History</h3>
+      <ul id="logHistory" class="list-group"></ul>
+    </div>
+
+    <!-- Backup & Restore Section -->
+    <div id="backup" class="tab-content hidden">
+      <h3>Backup & Restore</h3>
+      <button class="btn btn-info" onclick="exportData()">Backup Data</button>
+      <input type="file" id="importFile" class="form-control mt-2" onchange="importData(event)">
+    </div>
+
+    <!-- Registered Units List -->
+    <h4 class="mt-4">Registered Units</h4>
+    <input type="text" id="searchInput" class="form-control mb-2" placeholder="Search by name or serial...">
+    <select id="filterCategory" class="form-control mb-2" onchange="updateSerialList()">
+      <option value="">All Categories</option>
+      <option value="FC">Flight Controller</option>
+      <option value="Motor">Motor</option>
+      <option value="ESC">ESC</option>
+      <option value="Battery">Battery</option>
+    </select>
+    <table class="table table-striped">
+      <thead>
+        <tr>
+          <th>Part</th>
+          <th>Category</th>
+          <th>Project</th>
+          <th>Serial</th>
+          <th>Production Date</th>
+          <th>Actions</th>
+        </tr>
+      </thead>
+      <tbody id="serialList"></tbody>
+    </table>
+  </div>
+
+  <script>
+    // Inisialisasi data dari localStorage
+    let serials = JSON.parse(localStorage.getItem('droneSerials')) || [];
+    let logHistory = JSON.parse(localStorage.getItem('logHistory')) || [];
+    let projects = JSON.parse(localStorage.getItem('projects')) || [];
+
+    // Fungsi switch tab
+    document.addEventListener("DOMContentLoaded", function () {
+      let tabs = document.querySelectorAll(".nav-link");
+      tabs.forEach(tab => {
+        tab.addEventListener("click", function (event) {
+          event.preventDefault();
+          let activeTab = this.getAttribute("href").substring(1);
+          switchTab(activeTab);
+        });
+      });
+      // Tampilkan tab "check" secara default
+      switchTab("check");
+      updateProjectSelect();
+      updateProjectList();
+    });
+
+    function switchTab(tabId) {
+      let sections = document.querySelectorAll(".tab-content");
+      sections.forEach(section => section.classList.add("hidden"));
+      document.getElementById(tabId).classList.remove("hidden");
+
+      let tabs = document.querySelectorAll(".nav-link");
+      tabs.forEach(tab => tab.classList.remove("active"));
+      document.querySelector(`.nav-link[href="#${tabId}"]`).classList.add("active");
+    }
+
+    // Fungsi generate serial dengan format: 3 huruf + 6 digit + 4 huruf (contoh: WXR578290KLOM)
+    function generateSerial() {
+      function randomUppercase(n) {
+        let result = "";
+        const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+        for (let i = 0; i < n; i++) {
+          result += letters.charAt(Math.floor(Math.random() * letters.length));
+        }
+        return result;
+      }
+      function randomDigits(n) {
+        let result = "";
+        const digits = "0123456789";
+        for (let i = 0; i < n; i++) {
+          result += digits.charAt(Math.floor(Math.random() * digits.length));
+        }
+        return result;
+      }
+      let serial = randomUppercase(3) + randomDigits(6) + randomUppercase(4);
+      document.getElementById('newSerial').value = serial;
+      document.getElementById('qrcode').innerHTML = "";
+      new QRCode(document.getElementById('qrcode'), serial);
+    }
+
+    // Fungsi cek serial
+    function checkSerial() {
+      let input = document.getElementById('serialInput').value;
+      let result = serials.find(s => s.serial === input);
+      let statusText = document.getElementById('statusText');
+      let details = document.getElementById('serialDetails');
+      document.getElementById('result').classList.remove("hidden");
+      if (result) {
+        statusText.textContent = '✅ Valid Serial Number';
+        details.innerHTML = `<p>Part: ${result.part}<br>Category: ${result.category}<br>Project: ${result.project || 'N/A'}<br>Date: ${result.date}</p>`;
+      } else {
+        statusText.textContent = '❌ Invalid Serial Number';
+        details.innerHTML = '';
+      }
+    }
+
+    // Registrasi unit baru
+    document.getElementById('registrationForm').addEventListener('submit', function (e) {
+      e.preventDefault();
+      let part = document.getElementById('partName').value;
+      let category = document.getElementById('category').value;
+      let project = document.getElementById('projectSelect').value;
+      let serial = document.getElementById('newSerial').value;
+      let date = document.getElementById('prodDate').value;
+      serials.push({ part, category, project, serial, date });
+      logHistory.push(`Registered: ${part} (${serial})`);
+      saveData();
+      updateSerialList();
+      alert('Serial Registered!');
+      this.reset();
+      document.getElementById('qrcode').innerHTML = "";
+    });
+
+    // Fungsi untuk menyimpan data ke localStorage
+    function saveData() {
+      localStorage.setItem('droneSerials', JSON.stringify(serials));
+      localStorage.setItem('logHistory', JSON.stringify(logHistory));
+      localStorage.setItem('projects', JSON.stringify(projects));
+      updateLogHistory();
+      updateProjectSelect();
+      updateProjectList();
+    }
+
+    // Update list unit terdaftar dengan pencarian & filter
+    function updateSerialList() {
+      let searchValue = document.getElementById('searchInput').value.toLowerCase();
+      let filterValue = document.getElementById('filterCategory').value;
+      let tbody = document.getElementById('serialList');
+      let filteredSerials = serials.filter(s => {
+        return (s.part.toLowerCase().includes(searchValue) || s.serial.toLowerCase().includes(searchValue)) &&
+               (filterValue === "" || s.category === filterValue);
+      });
+      tbody.innerHTML = filteredSerials.map((s, index) => `
+        <tr>
+          <td>${s.part}</td>
+          <td>${s.category}</td>
+          <td>${s.project || 'N/A'}</td>
+          <td>${s.serial}</td>
+          <td>${s.date}</td>
+          <td>
+            <button class="btn btn-danger btn-sm" onclick="deleteSerial(${index})">Delete</button>
+            <button class="btn btn-primary btn-sm" onclick="editSerial(${index})">Edit</button>
+          </td>
+        </tr>
+      `).join('');
+    }
+
+    // Hapus unit
+    function deleteSerial(index) {
+      let deleted = serials.splice(index, 1)[0];
+      logHistory.push(`Deleted: ${deleted.part} (${deleted.serial})`);
+      saveData();
+      updateSerialList();
+    }
+
+    // Edit unit
+    function editSerial(index) {
+      let serialData = serials[index];
+      let newPart = prompt("Edit Part Name:", serialData.part);
+      if(newPart !== null) serialData.part = newPart;
+      let newCategory = prompt("Edit Category (FC, Motor, ESC, Battery):", serialData.category);
+      if(newCategory !== null) serialData.category = newCategory;
+      let newProject = prompt("Edit Project Name (or leave empty):", serialData.project);
+      serialData.project = newProject;
+      let newDate = prompt("Edit Production Date (YYYY-MM-DD):", serialData.date);
+      if(newDate !== null) serialData.date = newDate;
+      logHistory.push(`Edited: ${serialData.part} (${serialData.serial})`);
+      saveData();
+      updateSerialList();
+    }
+
+    // Backup data (export JSON)
+    function exportData() {
+      let blob = new Blob([JSON.stringify(serials)], { type: "application/json" });
+      let link = document.createElement("a");
+      link.href = URL.createObjectURL(blob);
+      link.download = "backup.json";
+      link.click();
+    }
+
+    // Import data (restore JSON)
+    function importData(event) {
+      let reader = new FileReader();
+      reader.onload = function() {
+        serials = JSON.parse(reader.result);
+        saveData();
+        updateSerialList();
+      };
+      reader.readAsText(event.target.files[0]);
+    }
+
+    // Update log history tampilan
+    function updateLogHistory() {
+      let logList = document.getElementById('logHistory');
+      logList.innerHTML = logHistory.map(log => `<li class="list-group-item">${log}</li>`).join('');
+    }
+
+    // Fungsi scan QR
+    function openScanner() {
+      let video = document.getElementById('scanner');
+      video.classList.remove("hidden");
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } })
+        .then(stream => {
+          video.srcObject = stream;
+          video.play();
+          let canvas = document.createElement("canvas");
+          let context = canvas.getContext("2d");
+
+          let interval = setInterval(() => {
+            if (!video.videoWidth) return;
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+            let imageData = context.getImageData(0, 0, canvas.width, canvas.height);
+            let code = jsQR(imageData.data, canvas.width, canvas.height);
+            if (code) {
+              document.getElementById('serialInput').value = code.data;
+              stream.getTracks().forEach(track => track.stop());
+              video.classList.add("hidden");
+              clearInterval(interval);
+            }
+          }, 500);
+        })
+        .catch(err => alert("Error accessing camera: " + err));
+    }
+
+    // Event listener untuk pencarian secara dinamis
+    document.getElementById('searchInput').addEventListener('input', updateSerialList);
+
+    // -------------------------
+    // Bagian Project Management
+    // -------------------------
+    // Tambah proyek baru
+    document.getElementById('projectForm').addEventListener('submit', function(e) {
+      e.preventDefault();
+      let name = document.getElementById('projectName').value;
+      let desc = document.getElementById('projectDesc').value;
+      // Buat ID unik untuk proyek
+      let project = { id: Date.now(), name, desc };
+      projects.push(project);
+      logHistory.push(`Project Added: ${name}`);
+      saveData();
+      updateProjectList();
+      this.reset();
+    });
+
+    // Update select proyek di form pendaftaran unit
+    function updateProjectSelect() {
+      let select = document.getElementById('projectSelect');
+      let options = `<option value="">Select Project (Optional)</option>`;
+      projects.forEach(p => {
+        options += `<option value="${p.name}">${p.name}</option>`;
+      });
+      select.innerHTML = options;
+    }
+
+    // Update daftar proyek pada tab Projects
+    function updateProjectList() {
+      let list = document.getElementById('projectList');
+      list.innerHTML = projects.map((p, index) => `
+        <li class="list-group-item d-flex justify-content-between align-items-center">
+          <div>
+            <strong>${p.name}</strong>
+            <p class="mb-0">${p.desc}</p>
+          </div>
+          <div>
+            <button class="btn btn-primary btn-sm" onclick="editProject(${index})">Edit</button>
+            <button class="btn btn-danger btn-sm" onclick="deleteProject(${index})">Delete</button>
+          </div>
+        </li>
+      `).join('');
+    }
+
+    // Edit proyek
+    function editProject(index) {
+      let project = projects[index];
+      let newName = prompt("Edit Project Name:", project.name);
+      if(newName !== null) project.name = newName;
+      let newDesc = prompt("Edit Project Description:", project.desc);
+      if(newDesc !== null) project.desc = newDesc;
+      logHistory.push(`Project Edited: ${project.name}`);
+      saveData();
+      updateProjectList();
+    }
+
+    // Hapus proyek
+    function deleteProject(index) {
+      let deleted = projects.splice(index, 1)[0];
+      logHistory.push(`Project Deleted: ${deleted.name}`);
+      saveData();
+      updateProjectList();
+    }
+
+    // Inisialisasi tampilan
+    updateSerialList();
+    updateLogHistory();
+  </script>
+</body>
+</html>
